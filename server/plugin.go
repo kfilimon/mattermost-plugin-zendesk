@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/mattermost/mattermost-server/v5/plugin"
+	"github.com/pkg/errors"
 )
 
 // Plugin implements the interface expected by the Mattermost server to communicate between the server and plugin processes.
@@ -18,6 +19,9 @@ type Plugin struct {
 	// configuration is the active plugin configuration. Consult getConfiguration and
 	// setConfiguration for usage.
 	configuration *configuration
+
+	// BotId of the created bot account.
+	botID string
 }
 
 // ServeHTTP demonstrates a plugin that handles HTTP requests by greeting the world.
@@ -25,4 +29,12 @@ func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Req
 	fmt.Fprint(w, "Hello, world!")
 }
 
-// See https://developers.mattermost.com/extend/plugins/server/reference/
+// OnActivate -
+func (p *Plugin) OnActivate() error {
+	err := p.API.RegisterCommand(getCommand())
+	if err != nil {
+		return errors.WithMessage(err, "OnActivate: failed to register command")
+	}
+
+	return nil
+}
