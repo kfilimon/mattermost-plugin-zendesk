@@ -3,8 +3,6 @@ package main
 import (
 	"reflect"
 
-	"github.com/mattermost/mattermost-server/v5/model"
-	"github.com/mattermost/mattermost-server/v5/plugin"
 	"github.com/pkg/errors"
 )
 
@@ -78,16 +76,6 @@ func (p *Plugin) OnConfigurationChange() error {
 	if err := p.API.LoadPluginConfiguration(configuration); err != nil {
 		return errors.Wrap(err, "failed to load plugin configuration")
 	}
-
-	botID, ensureBotError := p.Helpers.EnsureBot(&model.Bot{
-		Username:    "zendeskplugin",
-		DisplayName: "Zendesk Plugin Bot",
-		Description: "A bot account created by the zendesk plugin.",
-	}, plugin.IconImagePath("/assets/github.svg"))
-	if ensureBotError != nil {
-		return errors.Wrap(ensureBotError, "failed to ensure zendesk bot.")
-	}
-	p.botID = botID
 
 	p.setConfiguration(configuration)
 

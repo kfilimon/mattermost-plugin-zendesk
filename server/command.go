@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
+	"github.com/kfilimon/go-zendesk/zendesk"
 	"github.com/mattermost/mattermost-server/v5/model"
 	"github.com/mattermost/mattermost-server/v5/plugin"
 )
@@ -11,7 +15,13 @@ import (
 const helpTextHeader = "###### Mattermost Zendesk Plugin - Slash Command Help\n"
 
 const commonHelpText = "\n* `/zendesk status <case-number>` - Retrieve the current status of a case\n" +
-	"* `/zendesk update private <case-number>` - Post an Internal Comment to a case and notify agents\n"
+	"* `/zendesk details <case-number>` - Return details of the case\n" +
+	"* `/zendesk latest private <case-number>` - Retrieve the last internal comment posted to a case\n" +
+	"* `/zendesk latest public <case-number>` - Retrieve the last public comment posted to a case\n" +
+	"* `/zendesk update private <case-number>` - Post an internal comment to a case and notify agents\n" +
+	"* `/zendesk update public <case-number>` - Post a public comment to a case and notify agents\n" +
+	"* `/zendesk connect` - Connect to Zendesk\n" +
+	"* `/zendesk help` - Show Help\n"
 
 // CommandHandlerFunc -
 type CommandHandlerFunc func(p *Plugin, c *plugin.Context, header *model.CommandArgs, args ...string) *model.CommandResponse
@@ -24,8 +34,14 @@ type CommandHandler struct {
 
 var zendeskCommandHandler = CommandHandler{
 	handlers: map[string]CommandHandlerFunc{
-		"status": executeStatus,
-		"help":   commandHelp,
+		"connect":        executeConnect,
+		"status":         executeStatus,
+		"latest/private": executeLatestPrivate,
+		"latest/public":  executeLatestPublic,
+		"update/private": executeUpdatePrivate,
+		"update/public":  executeUpdatePublic,
+		"details":        executeDetails,
+		"help":           commandHelp,
 	},
 	defaultHandler: executeZendeskDefault,
 }
@@ -36,7 +52,7 @@ func getCommand() *model.Command {
 		DisplayName:      "Zendesk",
 		Description:      "Integration with Zendesk.",
 		AutoComplete:     true,
-		AutoCompleteDesc: "Available commands: status, update private, help",
+		AutoCompleteDesc: "Available commands: status, details, latest/private, latest/public, update/private, update/public, connect, help",
 		AutoCompleteHint: "[command]",
 	}
 }
@@ -73,15 +89,178 @@ func (p *Plugin) help(args *model.CommandArgs) *model.CommandResponse {
 	return &model.CommandResponse{}
 }
 
-// executeStatus returns the current status of a case, I.e. Pending, Open, On-Hold, Solved Closed
-func executeStatus(p *Plugin, c *plugin.Context, header *model.CommandArgs, args ...string) *model.CommandResponse {
-	if len(args) != 1 {
-		return p.responsef(header, "Please specify a case number in the form `/zendesk status <case-number>`.")
+func executeConnect(p *Plugin, c *plugin.Context, header *model.CommandArgs, args ...string) *model.CommandResponse {
+	if len(args) != 0 {
+		return p.help(header)
 	}
 
-	status := "On-Hold"
+	return p.responsef(header, "[Click here to link your Zendesk account](%s%s)",
+		p.GetPluginURL(), routeUserConnect)
+}
 
-	p.postCommandResponse(header, status)
+// executeStatus returns the current status of a case, I.e. Pending, Open, On-Hold, Solved Closed
+func executeStatus(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
+	if len(args) != 1 {
+		return p.responsef(commandArgs, "Please specify a case number in the form `/zendesk status <case-number>`.")
+	}
+
+	ticketNumber, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	ticket, err := p.zendeskClient.ShowTicket(ticketNumber)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+	}
+
+	status := *ticket.Status
+	p.postCommandResponse(commandArgs, status)
+	return &model.CommandResponse{}
+}
+
+// executeDetails - Return details of the case, Assignee, Requester, Organization, Issue, Priority, Status etc.
+func executeDetails(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
+	if len(args) != 1 {
+		return p.responsef(commandArgs, "Please specify a case number in the form `/zendesk status <case-number>`.")
+	}
+
+	ticketNumber, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	ticket, err := p.zendeskClient.ShowTicket(ticketNumber)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+	}
+
+	ticketStr, _ := json.Marshal(*ticket)
+
+	p.postCommandResponse(commandArgs, string(ticketStr))
+	return &model.CommandResponse{}
+}
+
+// executeUpdatePrivate - Post an Internal Comment to a case and notify agents
+func executeUpdatePrivate(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
+
+	ticketNumber, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	commentLine := parseCommentLine("(\\/zendesk\\s*update\\s*private\\s*\\d*)(.*)", commandArgs.Command)
+
+	isPublic := false
+	in := zendesk.Ticket{
+		Comment: &zendesk.TicketComment{
+			Public: &isPublic,
+			Body:   &commentLine,
+		},
+	}
+
+	updatedTicket, err := p.zendeskClient.UpdateTicket(ticketNumber, &in)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	p.postCommandResponse(commandArgs, "Private comment ["+commentLine+"] was added to ticket #"+strconv.FormatInt(*updatedTicket.ID, 10))
+
+	return &model.CommandResponse{}
+}
+
+// executeUpdatePublic - Post a Public Comment to a case and update all associated customer contacts and agents
+func executeUpdatePublic(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
+	ticketNumber, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	commentLine := parseCommentLine("(\\/zendesk\\s*update\\s*public\\s*\\d*)(.*)", commandArgs.Command)
+
+	isPublic := true
+	in := zendesk.Ticket{
+		Comment: &zendesk.TicketComment{
+			Public: &isPublic,
+			Body:   &commentLine,
+		},
+	}
+
+	updatedTicket, err := p.zendeskClient.UpdateTicket(ticketNumber, &in)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	p.postCommandResponse(commandArgs, "Public comment ["+commentLine+"] was added to ticket #"+strconv.FormatInt(*updatedTicket.ID, 10))
+
+	return &model.CommandResponse{}
+}
+
+// executeLatestPrivate - Return the last internal comment posted to a case
+func executeLatestPrivate(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
+	if len(args) != 1 {
+		return p.responsef(commandArgs, "Please specify a case number in the form `/zendesk latest private <case-number>`.")
+	}
+
+	ticketNumber, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	ticketComments, err := p.zendeskClient.ListTicketComments(ticketNumber)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+	}
+
+	var lastPrivateComment zendesk.TicketComment
+	for i := len(ticketComments) - 1; i >= 0; i-- {
+		currentComment := ticketComments[i]
+		if !*currentComment.Public {
+			lastPrivateComment = currentComment
+			break
+		}
+	}
+
+	p.postCommandResponse(commandArgs, *lastPrivateComment.Body)
+
+	return &model.CommandResponse{}
+}
+
+// executeLatestPublic -  Return the last Public Comment posted to a case
+func executeLatestPublic(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
+	if len(args) != 1 {
+		return p.responsef(commandArgs, "Please specify a case number in the form `/zendesk latest public <case-number>`.")
+	}
+
+	ticketNumber, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+
+	}
+
+	ticketComments, err := p.zendeskClient.ListTicketComments(ticketNumber)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+	}
+
+	var lastPublicComment zendesk.TicketComment
+	for i := len(ticketComments) - 1; i >= 0; i-- {
+		currentComment := ticketComments[i]
+		if *currentComment.Public {
+			lastPublicComment = currentComment
+			break
+		}
+	}
+
+	p.postCommandResponse(commandArgs, *lastPublicComment.Body)
+
 	return &model.CommandResponse{}
 }
 
@@ -102,4 +281,11 @@ func (p *Plugin) postCommandResponse(args *model.CommandArgs, text string) {
 func (p *Plugin) responsef(commandArgs *model.CommandArgs, format string, args ...interface{}) *model.CommandResponse {
 	p.postCommandResponse(commandArgs, fmt.Sprintf(format, args...))
 	return &model.CommandResponse{}
+}
+
+func parseCommentLine(regexString string, command string) string {
+	re := regexp.MustCompile(regexString)
+	commentLine := re.ReplaceAllString(command, "$2")
+
+	return commentLine
 }
