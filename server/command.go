@@ -136,10 +136,31 @@ func executeDetails(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs
 	if err != nil {
 		return p.responsef(commandArgs, err.Error())
 	}
+	var organization *zendesk.Organization
+	if ticket.OrganizationID != nil {
+		organization, err = p.zendeskClient.ShowOrganization(*ticket.OrganizationID)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+	}
 
+	attachment, err := p.parseTicket(ticket, organization)
+	if err != nil {
+		return p.responsef(commandArgs, err.Error())
+	}
+
+	post := &model.Post{
+		UserId:    p.botID,
+		ChannelId: commandArgs.ChannelId,
+	}
+	post.AddProp("attachments", attachment)
+
+	_ = p.API.SendEphemeralPost(commandArgs.UserId, post)
+
+	//TODO - remove - test only
 	ticketStr, _ := json.Marshal(*ticket)
+	p.postCommandResponse(commandArgs, "TEST ONLY - RAW OUTPUT: "+string(ticketStr))
 
-	p.postCommandResponse(commandArgs, string(ticketStr))
 	return &model.CommandResponse{}
 }
 
@@ -288,4 +309,74 @@ func parseCommentLine(regexString string, command string) string {
 	commentLine := re.ReplaceAllString(command, "$2")
 
 	return commentLine
+}
+
+func (p *Plugin) parseTicket(ticket *zendesk.Ticket, organization *zendesk.Organization) ([]*model.SlackAttachment, error) {
+	ticketID := strconv.FormatInt(*ticket.ID, 10)
+
+	text := fmt.Sprintf("[%s](%s%s)", ticketID+": "+*ticket.Subject, "https://my-testhelp.zendesk.com", "/agent/tickets/"+ticketID)
+	desc := truncate(*ticket.Description, 3000)
+	if desc != "" {
+		text += "\n\n" + desc + "\n"
+	}
+
+	var fields []*model.SlackAttachmentField
+
+	if ticket.Status != nil {
+		fields = append(fields, &model.SlackAttachmentField{
+			Title: "Status",
+			Value: *ticket.Status,
+			Short: true,
+		})
+	}
+
+	if ticket.AssigneeEmail != nil {
+		fields = append(fields, &model.SlackAttachmentField{
+			Title: "Assignee",
+			Value: *ticket.AssigneeEmail,
+			Short: true,
+		})
+	}
+
+	if ticket.Requester != nil && ticket.Requester.Name != nil {
+		fields = append(fields, &model.SlackAttachmentField{
+			Title: "Requester",
+			Value: *ticket.Requester.Name,
+			Short: true,
+		})
+	}
+
+	if organization != nil && organization.Name != nil {
+		fields = append(fields, &model.SlackAttachmentField{
+			Title: "Organization",
+			Value: *organization.Name,
+			Short: true,
+		})
+	}
+
+	if ticket.Priority != nil {
+		fields = append(fields, &model.SlackAttachmentField{
+			Title: "Priority",
+			Value: *ticket.Priority,
+			Short: true,
+		})
+	}
+
+	return []*model.SlackAttachment{
+		{
+			Color:  "#95b7d0",
+			Text:   text,
+			Fields: fields,
+		},
+	}, nil
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max || max < 0 {
+		return s
+	}
+	if max > 3 {
+		return s[:max-3] + "..."
+	}
+	return s[:max]
 }
