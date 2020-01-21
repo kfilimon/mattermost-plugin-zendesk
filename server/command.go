@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -35,6 +36,7 @@ type CommandHandler struct {
 var zendeskCommandHandler = CommandHandler{
 	handlers: map[string]CommandHandlerFunc{
 		"connect":        executeConnect,
+		"disconnect":     executeDisconnect,
 		"status":         executeStatus,
 		"latest/private": executeLatestPrivate,
 		"latest/public":  executeLatestPublic,
@@ -52,7 +54,7 @@ func getCommand() *model.Command {
 		DisplayName:      "Zendesk",
 		Description:      "Integration with Zendesk.",
 		AutoComplete:     true,
-		AutoCompleteDesc: "Available commands: status, details, latest/private, latest/public, update/private, update/public, connect, help",
+		AutoCompleteDesc: "Available commands: status, details, latest/private, latest/public, update/private, update/public, connect, disconnect, help",
 		AutoCompleteHint: "[command]",
 	}
 }
@@ -89,13 +91,27 @@ func (p *Plugin) help(args *model.CommandArgs) *model.CommandResponse {
 	return &model.CommandResponse{}
 }
 
-func executeConnect(p *Plugin, c *plugin.Context, header *model.CommandArgs, args ...string) *model.CommandResponse {
+func executeConnect(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
 	if len(args) != 0 {
-		return p.help(header)
+		return p.help(commandArgs)
 	}
 
-	return p.responsef(header, "[Click here to link your Zendesk account](%s%s)",
-		p.GetPluginURL(), routeUserConnect)
+	mmuser, err := p.API.GetUser(commandArgs.UserId)
+	if err != nil {
+		return p.help(commandArgs)
+	}
+
+	return p.responsef(commandArgs, "[Click here to link your Zendesk account - /%s/](%s%s)",
+		mmuser.Username, p.GetPluginURL(), routeUserConnect)
+}
+
+func executeDisconnect(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs, args ...string) *model.CommandResponse {
+	if len(args) != 0 {
+		return p.help(commandArgs)
+	}
+
+	p.postCommandResponse(commandArgs, "Disconnecting...")
+	return &model.CommandResponse{}
 }
 
 // executeStatus returns the current status of a case, I.e. Pending, Open, On-Hold, Solved Closed
@@ -110,9 +126,22 @@ func executeStatus(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs,
 
 	}
 
-	ticket, err := p.zendeskClient.ShowTicket(ticketNumber)
-	if err != nil {
-		return p.responsef(commandArgs, err.Error())
+	var ticket *zendesk.Ticket
+	if token, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
+		var client zendesk.Client
+		u, _ := url.Parse(p.getConfiguration().ZendeskURL)
+		clientHost := strings.Split(u.Host, ".")[0]
+		client, err = zendesk.NewClientWithOAuthToken(clientHost, token)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+		ticket, err = client.ShowTicket(ticketNumber)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+	} else {
+		p.postCommandResponse(commandArgs, "Please connect to Zendesk")
+		return &model.CommandResponse{}
 	}
 
 	status := *ticket.Status
@@ -314,7 +343,8 @@ func parseCommentLine(regexString string, command string) string {
 func (p *Plugin) parseTicket(ticket *zendesk.Ticket, organization *zendesk.Organization) ([]*model.SlackAttachment, error) {
 	ticketID := strconv.FormatInt(*ticket.ID, 10)
 
-	text := fmt.Sprintf("[%s](%s%s)", ticketID+": "+*ticket.Subject, "https://my-testhelp.zendesk.com", "/agent/tickets/"+ticketID)
+	zendeskURL := p.getConfiguration().ZendeskURL
+	text := fmt.Sprintf("[%s](%s%s)", ticketID+": "+*ticket.Subject, zendeskURL, "/agent/tickets/"+ticketID)
 	desc := truncate(*ticket.Description, 3000)
 	if desc != "" {
 		text += "\n\n" + desc + "\n"

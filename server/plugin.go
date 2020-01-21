@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,10 +35,16 @@ type Plugin struct {
 
 	// zendesk client
 	zendeskClient zendesk.Client
+
+	// map of the mattermost user with access token from zendesk
+	oauthAccessTokenMap map[string]string
+
+	zendeskURL           string
+	zendeskClientSecrete string
 }
 
 const (
-	routeOAuthComplete = "/oauth/complete"
+	routeOAuthRedirect = "/oauth/redirect"
 	routeUserConnect   = "/user/connect"
 	routeTest          = "/test"
 )
@@ -56,13 +65,15 @@ func (p *Plugin) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Req
 	default:
 		w.WriteHeader(status)
 	}
-	//p.API.LogDebug("OK: ", "Status", strconv.Itoa(status), "Host", r.Host, "RequestURI", r.RequestURI, "Method", r.Method, "query", r.URL.Query().Encode())
+	p.API.LogDebug("OK: ", "Status", strconv.Itoa(status), "Host", r.Host, "RequestURI", r.RequestURI, "Method", r.Method, "query", r.URL.Query().Encode())
 }
 
 func handleHTTPRequest(p *Plugin, w http.ResponseWriter, r *http.Request) (int, error) {
 	switch r.URL.Path {
 	case routeUserConnect:
-		return httpUserConnect(w, r)
+		return httpUserConnect(p, w, r)
+	case routeOAuthRedirect:
+		return httpOAuthRedirect(p, w, r)
 	case routeTest:
 		return handleTest(w, r)
 	}
@@ -75,21 +86,123 @@ func handleTest(w http.ResponseWriter, r *http.Request) (int, error) {
 	return http.StatusOK, nil
 }
 
-func httpUserConnect(w http.ResponseWriter, r *http.Request) (int, error) {
+func httpUserConnect(p *Plugin, w http.ResponseWriter, r *http.Request) (int, error) {
+	// if access token is already associated with the muser then it means connection is not required
+	// and we might skip going here; on the other hand if access token is revoked then how we would know
+	// that it's expired, so we do need to come here; TODO: research
+
 	if r.Method != http.MethodGet {
 		return http.StatusMethodNotAllowed,
 			errors.New("method " + r.Method + " is not allowed, must be GET")
 	}
 
-	mattermostUserID := r.Header.Get("Mattermost-User-Id")
-	if mattermostUserID == "" {
-		return http.StatusUnauthorized, errors.New("not authorized")
-	}
+	zendeskURL := p.getConfiguration().ZendeskURL
+	pluginURL := p.GetPluginURL()
 
-	redirectURL := "https://google.com"
+	redirectURL := zendeskURL + "/oauth/authorizations/new?" +
+		"response_type=code&" +
+		"redirect_uri=" + pluginURL + "/oauth/redirect&" +
+		"client_id=mattermost_integration_for_zendesk&" +
+		"scope=read%20write"
+	p.API.LogDebug("zendeskplugin: redirecturl:" + redirectURL)
 
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 	return http.StatusFound, nil
+}
+
+// OAuthAccessResponse -
+type OAuthAccessResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
+// OAuthAccessRequest -
+type OAuthAccessRequest struct {
+	GrantType    string `json:"grant_type"`
+	Code         string `json:"code"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	RedirectURL  string `json:"redirect_uri"`
+	Scope        string `json:"scope"`
+}
+
+func httpOAuthRedirect(p *Plugin, w http.ResponseWriter, r *http.Request) (int, error) {
+
+	// if there is "error" in the query string then it means user didn't authorize mattermost to go to zendesk
+	// so we need to check for error and show it for muser
+
+	// if the redirect url doesn't contain error - happy path:
+
+	// get the value of the `code` query param
+	err := r.ParseForm()
+	if err != nil {
+		fmt.Fprint(w, "Something went wrong: "+err.Error())
+		return http.StatusOK, nil
+	}
+	code := r.FormValue("code")
+
+	// Call the zendesk oauth endpoint to get access token
+	reqURL := p.configuration.ZendeskURL + "/oauth/tokens"
+
+	clientID := p.getConfiguration().ZendeskClientID
+	clientSecret := p.getConfiguration().ZendeskClientSecrete
+
+	redirectURL := p.GetPluginURL() + "/oauth/redirect"
+	oauthRequest := OAuthAccessRequest{
+		GrantType:    "authorization_code",
+		Code:         code,
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  redirectURL,
+		Scope:        "read write",
+	}
+
+	requestBodyBytes, err := json.Marshal(oauthRequest)
+	if err != nil {
+		fmt.Fprint(w, "Something went wrong: "+err.Error())
+		return http.StatusOK, nil
+	}
+	requestBody := requestBodyBytes
+	p.API.LogDebug(string(requestBody))
+
+	req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewBuffer([]byte(requestBody)))
+	if err != nil {
+		fmt.Fprint(w, "Something went wrong: "+err.Error())
+		return http.StatusOK, nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send out the HTTP request
+	httpClient := http.Client{}
+	res, err := httpClient.Do(req)
+	if err != nil {
+		fmt.Fprint(w, "Something went wrong: "+err.Error())
+		return http.StatusOK, nil
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode < 200 || res.StatusCode >= 400 {
+		bodyBytes, _ := ioutil.ReadAll(res.Body)
+		bodyString := string(bodyBytes)
+		fmt.Fprint(w, "Could not obtain OAuth access token from zendesk: "+bodyString)
+		return http.StatusOK, nil
+	}
+
+	// Parse the response with access token
+	var oauthResponse OAuthAccessResponse
+	if err = json.NewDecoder(res.Body).Decode(&oauthResponse); err != nil {
+		fmt.Fprint(w, "Something went wrong: "+err.Error())
+		return http.StatusOK, nil
+	}
+
+	mattermostUserID := r.Header.Get("Mattermost-User-ID")
+	//TODO: how to get UserName
+	p.oauthAccessTokenMap[mattermostUserID] = oauthResponse.AccessToken
+
+	fmt.Fprint(w, "Successfully connected mattermost account "+
+		mattermostUserID+" "+
+		" with zendesk account: "+oauthResponse.AccessToken)
+
+	return http.StatusOK, nil
 }
 
 // GetPluginURLPath -
@@ -99,7 +212,14 @@ func (p *Plugin) GetPluginURLPath() string {
 
 // GetPluginURL -
 func (p *Plugin) GetPluginURL() string {
-	return strings.TrimRight(p.GetSiteURL(), "/") + p.GetPluginURLPath()
+	siteURL := p.GetSiteURL()
+
+	// workaround for localhost testing
+	if !strings.Contains(siteURL, ".com") {
+		siteURL = "http://localhost:8066"
+	}
+
+	return strings.TrimRight(siteURL, "/") + p.GetPluginURLPath()
 }
 
 // GetSiteURL -
@@ -118,6 +238,8 @@ func (p *Plugin) OnActivate() error {
 	if err != nil {
 		return errors.WithMessage(err, "OnActivate: failed to register command")
 	}
+
+	p.oauthAccessTokenMap = make(map[string]string)
 
 	// ensure bot
 	botID, ensureBotError := p.Helpers.EnsureBot(&model.Bot{
@@ -148,7 +270,10 @@ func (p *Plugin) OnActivate() error {
 	username := os.Getenv("ZENDESK_USER")
 	password := os.Getenv("ZENDESK_PASSWORD")
 
-	client, err := zendesk.NewClient("my-testhelp", username, password)
+	u, _ := url.Parse(p.getConfiguration().ZendeskURL)
+	clientHost := strings.Split(u.Host, ".")[0]
+
+	client, err := zendesk.NewClient(clientHost, username, password)
 	if err != nil {
 		return errors.Wrap(err, "couldn't connect to zendesk")
 	}

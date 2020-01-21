@@ -31,7 +31,32 @@ const manifestStr = `
   "settings_schema": {
     "header": "",
     "footer": "",
-    "settings": []
+    "settings": [
+      {
+        "key": "ZendeskURL",
+        "display_name": "Zendesk Web Site URL",
+        "type": "text",
+        "help_text": "Zendesk Web Site URL.",
+        "placeholder": "",
+        "default": "https://my-testhelp.zendesk.com"
+      },
+      {
+        "key": "ZendeskClientID",
+        "display_name": "Zendesk OAuth Client ID",
+        "type": "text",
+        "help_text": "Zendesk OAuth Client ID.",
+        "placeholder": "",
+        "default": "mattermost_integration_for_zendesk_demo"
+      },
+      {
+        "key": "ZendeskClientSecrete",
+        "display_name": "Zendesk OAuth Client Secrete",
+        "type": "text",
+        "help_text": "Zendesk OAuth Client Secrete.",
+        "placeholder": "",
+        "default": ""
+      }
+    ]
   }
 }
 `
