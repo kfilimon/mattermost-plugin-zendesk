@@ -22,6 +22,7 @@ const commonHelpText = "\n* `/zendesk status <case-number>` - Retrieve the curre
 	"* `/zendesk update private <case-number>` - Post an internal comment to a case and notify agents\n" +
 	"* `/zendesk update public <case-number>` - Post a public comment to a case and notify agents\n" +
 	"* `/zendesk connect` - Connect to Zendesk\n" +
+	"* `/zendesk disconnect` - Disconnect from Zendesk\n" +
 	"* `/zendesk help` - Show Help\n"
 
 // CommandHandlerFunc -

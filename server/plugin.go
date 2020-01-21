@@ -97,12 +97,13 @@ func httpUserConnect(p *Plugin, w http.ResponseWriter, r *http.Request) (int, er
 	}
 
 	zendeskURL := p.getConfiguration().ZendeskURL
+	clientID := p.getConfiguration().ZendeskClientID
 	pluginURL := p.GetPluginURL()
 
 	redirectURL := zendeskURL + "/oauth/authorizations/new?" +
 		"response_type=code&" +
 		"redirect_uri=" + pluginURL + "/oauth/redirect&" +
-		"client_id=mattermost_integration_for_zendesk&" +
+		"client_id=" + clientID + "&" +
 		"scope=read%20write"
 	p.API.LogDebug("zendeskplugin: redirecturl:" + redirectURL)
 
