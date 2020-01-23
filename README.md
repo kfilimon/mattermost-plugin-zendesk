@@ -15,12 +15,17 @@ The following commands are implemented:
 /zendesk disconnect - Disconnects the current Mattermost user from Zendesk (OAuth token is removed from the memory on Mattermost side)
 /zendesk help - Shows a help message for the existing commands
 ```
+
 ## Helpful resources
+[Zendesk](https://www.zendesk.com/)
+
 [Using OAuth authentication in Zendesk](https://support.zendesk.com/hc/en-us/articles/203663836-Using-OAuth-authentication-with-your-application) - step by step implementation of OAuth2 for Zendesk (in python)
 
-[Mattermost Demo Plugin - Github] (https://github.com/mattermost/mattermost-plugin-demo) - simple plugin for Mattermost
+[Mattermost Demo Plugin - Github](https://github.com/mattermost/mattermost-plugin-demo) - simple plugin for Mattermost
 
 [Mattermost Jira Plugin - Github](https://github.com/mattermost/mattermost-plugin-jira) - Jira plugin - similar functionality as for Zendesk so could be used as an example
+
+[Golang Client for Zendesk - Github](https://github.com/MEDIGO/go-zendesk) - go client for Zendesk (I forked it to add OAuth token support)
 
 
 ## Disclaimer
