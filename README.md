@@ -15,6 +15,11 @@ The following commands are implemented:
 /zendesk disconnect - Disconnects the current Mattermost user from Zendesk (OAuth token is removed from the memory on Mattermost side)
 /zendesk help - Shows a help message for the existing commands
 ```
+![image](https://user-images.githubusercontent.com/17086299/73023882-b2f36480-3e2c-11ea-8388-3fb4b97fd094.png)
+
+Three configuration properties will have to be modified after enabling the plugin: 
+
+![image](https://user-images.githubusercontent.com/17086299/73024021-f9e15a00-3e2c-11ea-9889-9ae5caf78f45.png)
 
 ## Helpful resources
 [Zendesk](https://www.zendesk.com/)
