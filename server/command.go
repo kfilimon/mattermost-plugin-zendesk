@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -128,6 +127,7 @@ func executeStatus(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs,
 	}
 
 	var ticket *zendesk.Ticket
+
 	if token, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
 		var client zendesk.Client
 		u, _ := url.Parse(p.getConfiguration().ZendeskURL)
@@ -162,10 +162,25 @@ func executeDetails(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs
 
 	}
 
-	ticket, err := p.zendeskClient.ShowTicket(ticketNumber)
-	if err != nil {
-		return p.responsef(commandArgs, err.Error())
+	var ticket *zendesk.Ticket
+
+	if token, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
+		var client zendesk.Client
+		u, _ := url.Parse(p.getConfiguration().ZendeskURL)
+		clientHost := strings.Split(u.Host, ".")[0]
+		client, err = zendesk.NewClientWithOAuthToken(clientHost, token)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+		ticket, err = client.ShowTicket(ticketNumber)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+	} else {
+		p.postCommandResponse(commandArgs, "Please connect to Zendesk")
+		return &model.CommandResponse{}
 	}
+
 	var organization *zendesk.Organization
 	if ticket.OrganizationID != nil {
 		organization, err = p.zendeskClient.ShowOrganization(*ticket.OrganizationID)
@@ -188,8 +203,8 @@ func executeDetails(p *Plugin, c *plugin.Context, commandArgs *model.CommandArgs
 	_ = p.API.SendEphemeralPost(commandArgs.UserId, post)
 
 	//TODO - remove - test only
-	ticketStr, _ := json.Marshal(*ticket)
-	p.postCommandResponse(commandArgs, "TEST ONLY - RAW OUTPUT: "+string(ticketStr))
+	//ticketStr, _ := json.Marshal(*ticket)
+	//p.postCommandResponse(commandArgs, "TEST ONLY - RAW OUTPUT: "+string(ticketStr))
 
 	return &model.CommandResponse{}
 }
@@ -213,10 +228,23 @@ func executeUpdatePrivate(p *Plugin, c *plugin.Context, commandArgs *model.Comma
 		},
 	}
 
-	updatedTicket, err := p.zendeskClient.UpdateTicket(ticketNumber, &in)
-	if err != nil {
-		return p.responsef(commandArgs, err.Error())
+	var updatedTicket *zendesk.Ticket
 
+	if token, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
+		var client zendesk.Client
+		u, _ := url.Parse(p.getConfiguration().ZendeskURL)
+		clientHost := strings.Split(u.Host, ".")[0]
+		client, err = zendesk.NewClientWithOAuthToken(clientHost, token)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+		updatedTicket, err = client.UpdateTicket(ticketNumber, &in)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+	} else {
+		p.postCommandResponse(commandArgs, "Please connect to Zendesk")
+		return &model.CommandResponse{}
 	}
 
 	p.postCommandResponse(commandArgs, "Private comment ["+commentLine+"] was added to ticket #"+strconv.FormatInt(*updatedTicket.ID, 10))
@@ -242,10 +270,23 @@ func executeUpdatePublic(p *Plugin, c *plugin.Context, commandArgs *model.Comman
 		},
 	}
 
-	updatedTicket, err := p.zendeskClient.UpdateTicket(ticketNumber, &in)
-	if err != nil {
-		return p.responsef(commandArgs, err.Error())
+	var updatedTicket *zendesk.Ticket
 
+	if token, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
+		var client zendesk.Client
+		u, _ := url.Parse(p.getConfiguration().ZendeskURL)
+		clientHost := strings.Split(u.Host, ".")[0]
+		client, err = zendesk.NewClientWithOAuthToken(clientHost, token)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+		updatedTicket, err = client.UpdateTicket(ticketNumber, &in)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+	} else {
+		p.postCommandResponse(commandArgs, "Please connect to Zendesk")
+		return &model.CommandResponse{}
 	}
 
 	p.postCommandResponse(commandArgs, "Public comment ["+commentLine+"] was added to ticket #"+strconv.FormatInt(*updatedTicket.ID, 10))
@@ -265,9 +306,23 @@ func executeLatestPrivate(p *Plugin, c *plugin.Context, commandArgs *model.Comma
 
 	}
 
-	ticketComments, err := p.zendeskClient.ListTicketComments(ticketNumber)
-	if err != nil {
-		return p.responsef(commandArgs, err.Error())
+	var ticketComments []zendesk.TicketComment
+
+	if token, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
+		var client zendesk.Client
+		u, _ := url.Parse(p.getConfiguration().ZendeskURL)
+		clientHost := strings.Split(u.Host, ".")[0]
+		client, err = zendesk.NewClientWithOAuthToken(clientHost, token)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+		ticketComments, err = client.ListTicketComments(ticketNumber)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+	} else {
+		p.postCommandResponse(commandArgs, "Please connect to Zendesk")
+		return &model.CommandResponse{}
 	}
 
 	var lastPrivateComment zendesk.TicketComment
@@ -296,9 +351,23 @@ func executeLatestPublic(p *Plugin, c *plugin.Context, commandArgs *model.Comman
 
 	}
 
-	ticketComments, err := p.zendeskClient.ListTicketComments(ticketNumber)
-	if err != nil {
-		return p.responsef(commandArgs, err.Error())
+	var ticketComments []zendesk.TicketComment
+
+	if token, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
+		var client zendesk.Client
+		u, _ := url.Parse(p.getConfiguration().ZendeskURL)
+		clientHost := strings.Split(u.Host, ".")[0]
+		client, err = zendesk.NewClientWithOAuthToken(clientHost, token)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+		ticketComments, err = client.ListTicketComments(ticketNumber)
+		if err != nil {
+			return p.responsef(commandArgs, err.Error())
+		}
+	} else {
+		p.postCommandResponse(commandArgs, "Please connect to Zendesk")
+		return &model.CommandResponse{}
 	}
 
 	var lastPublicComment zendesk.TicketComment
