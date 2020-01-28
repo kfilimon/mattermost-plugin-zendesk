@@ -110,8 +110,13 @@ func executeDisconnect(p *Plugin, c *plugin.Context, commandArgs *model.CommandA
 		return p.help(commandArgs)
 	}
 
-	p.postCommandResponse(commandArgs, "Disconnecting...")
-	return &model.CommandResponse{}
+	if _, ok := p.oauthAccessTokenMap[commandArgs.UserId]; ok {
+		delete(p.oauthAccessTokenMap, commandArgs.UserId)
+		p.postCommandResponse(commandArgs, "Disconnected")
+		return &model.CommandResponse{}
+	}
+
+	return p.responsef(commandArgs, "You are not connected. To connect run `/zendesk connect`.")
 }
 
 // executeStatus returns the current status of a case, I.e. Pending, Open, On-Hold, Solved Closed
