@@ -38,5 +38,4 @@ The current implementation is a POC and should be treated as such.
 
 Error handling, test coverage, code organization, OAuth implementation must be improved before considering this plugin ready for production use.
 
-**Note**: only *status* command is using OAuth token for requesting data from Zendesk. Other commands rely on username/API token authentication (which should exist in corresponding environment variables on the Mattermost server)
 
